@@ -9,6 +9,17 @@ from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from mangum import Mangum
 
+# Define a custom JSON encoder to handle datetime objects
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+# Helper function for JSON serialization with datetime support
+def json_dumps_with_datetime(obj):
+    return json.dumps(obj, cls=DateTimeEncoder)
+
 # Configure logging with more details
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -88,7 +99,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
         acm_client = clients["acm"]
         
         # First, check for existing certificates
-        logger.info(json.dumps({
+        logger.info(json_dumps_with_datetime({
             "action": "check_existing_certificates",
             "domain": domain,
             "workspace_id": workspace_id,
@@ -101,7 +112,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                 CertificateStatuses=['PENDING_VALIDATION', 'ISSUED']
             )
             
-            logger.info(json.dumps({
+            logger.info(json_dumps_with_datetime({
                 "action": "list_certificates",
                 "count": len(certificates.get('CertificateSummaryList', [])),
                 "message": "Retrieved certificates list"
@@ -110,7 +121,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
             # Find any existing certificate for this domain + workspace
             for cert in certificates.get('CertificateSummaryList', []):
                 if cert['DomainName'] == domain:
-                    logger.info(json.dumps({
+                    logger.info(json_dumps_with_datetime({
                         "action": "found_matching_domain",
                         "domain": domain,
                         "cert_arn": cert['CertificateArn'],
@@ -128,7 +139,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                             CertificateArn=cert['CertificateArn']
                         )
                         
-                        logger.info(json.dumps({
+                        logger.info(json_dumps_with_datetime({
                             "action": "certificate_tags",
                             "domain": domain,
                             "cert_arn": cert['CertificateArn'],
@@ -140,7 +151,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                         for tag in cert_tags.get('Tags', []):
                             if tag['Key'] == 'WorkspaceId' and tag['Value'] == workspace_id:
                                 existing_cert_arn = cert['CertificateArn']
-                                logger.info(json.dumps({
+                                logger.info(json_dumps_with_datetime({
                                     "action": "found_matching_workspace",
                                     "domain": domain,
                                     "workspace_id": workspace_id,
@@ -149,7 +160,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                                 }))
                                 break
                     except Exception as tag_error:
-                        logger.error(json.dumps({
+                        logger.error(json_dumps_with_datetime({
                             "action": "tags_error",
                             "domain": domain,
                             "cert_arn": cert['CertificateArn'],
@@ -160,7 +171,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                     if existing_cert_arn:
                         break
         except Exception as e:
-            logger.error(json.dumps({
+            logger.error(json_dumps_with_datetime({
                 "action": "check_certificates_error",
                 "error": str(e),
                 "message": "Error checking existing certificates"
@@ -169,7 +180,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
         
         # Either reuse existing certificate or create new one
         if existing_cert_arn:
-            logger.info(json.dumps({
+            logger.info(json_dumps_with_datetime({
                 "action": "reuse_certificate",
                 "domain": domain,
                 "workspace_id": workspace_id,
@@ -178,7 +189,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
             }))
             certificate_arn = existing_cert_arn
         else:
-            logger.info(json.dumps({
+            logger.info(json_dumps_with_datetime({
                 "action": "create_certificate",
                 "domain": domain,
                 "workspace_id": workspace_id,
@@ -199,7 +210,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                 
                 # Add validation domain for EMAIL validation if provided
                 if domain_request.validation_method == 'EMAIL' and domain_request.validation_domain:
-                    logger.info(json.dumps({
+                    logger.info(json_dumps_with_datetime({
                         "action": "using_validation_domain",
                         "domain": domain,
                         "validation_domain": domain_request.validation_domain,
@@ -212,11 +223,19 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                             'ValidationDomain': domain_request.validation_domain
                         }
                     ]
+                elif domain_request.validation_method == 'DNS' and domain_request.validation_domain:
+                    # Log that we're ignoring validation_domain for DNS validation
+                    logger.info(json_dumps_with_datetime({
+                        "action": "ignoring_validation_domain",
+                        "domain": domain,
+                        "validation_domain": domain_request.validation_domain,
+                        "message": "Ignoring validation_domain parameter for DNS validation"
+                    }))
                 
                 # Request the certificate with appropriate parameters
                 certificate_response = acm_client.request_certificate(**cert_params)
                 certificate_arn = certificate_response['CertificateArn']
-                logger.info(json.dumps({
+                logger.info(json_dumps_with_datetime({
                     "action": "certificate_created",
                     "domain": domain,
                     "workspace_id": workspace_id,
@@ -224,7 +243,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                     "message": "Successfully created new certificate"
                 }))
             except Exception as cert_error:
-                logger.error(json.dumps({
+                logger.error(json_dumps_with_datetime({
                     "action": "create_certificate_error",
                     "domain": domain,
                     "workspace_id": workspace_id,
@@ -239,7 +258,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
         )
         
         # Log certificate details for debugging
-        logger.info(json.dumps({
+        logger.info(json_dumps_with_datetime({
             "action": "certificate_details",
             "domain": domain,
             "workspace_id": workspace_id,
@@ -257,7 +276,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
         while retry_count < max_retries:
             if 'Certificate' in certificate_details and 'DomainValidationOptions' in certificate_details['Certificate']:
                 # Log validation options for debugging
-                logger.info(json.dumps({
+                logger.info(json_dumps_with_datetime({
                     "action": "validation_options",
                     "domain": domain,
                     "workspace_id": workspace_id,
@@ -279,7 +298,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
                 break
                 
             # Otherwise, wait and retry
-            logger.info(json.dumps({
+            logger.info(json_dumps_with_datetime({
                 "action": "retry_validation_records",
                 "domain": domain,
                 "workspace_id": workspace_id,
@@ -315,7 +334,7 @@ async def request_domain(domain_request: DomainRequest, clients=Depends(get_clie
         )
         
     except Exception as e:
-        logger.error(json.dumps({
+        logger.error(json_dumps_with_datetime({
             "action": "request_domain_error",
             "domain": domain,
             "workspace_id": workspace_id,
@@ -349,7 +368,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
     validation_domain = None
     message = "Certificate not found"
     
-    logger.info(json.dumps({
+    logger.info(json_dumps_with_datetime({
         "action": "check_domain_status",
         "domain": domain,
         "workspace_id": workspace_id,
@@ -358,7 +377,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
     
     try:
         # Find the certificate for the domain and workspace
-        logger.info(json.dumps({
+        logger.info(json_dumps_with_datetime({
             "action": "find_certificate",
             "domain": domain,
             "workspace_id": workspace_id,
@@ -371,7 +390,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
         )
         
         # Log how many certificates we found
-        logger.info(json.dumps({
+        logger.info(json_dumps_with_datetime({
             "action": "list_certificates",
             "count": len(certificates.get('CertificateSummaryList', [])),
             "message": "Retrieved certificates list"
@@ -383,7 +402,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
         # Find the certificate matching the domain
         for cert in certificates.get('CertificateSummaryList', []):
             if cert['DomainName'] == domain:
-                logger.info(json.dumps({
+                logger.info(json_dumps_with_datetime({
                     "action": "found_matching_domain",
                     "domain": domain,
                     "cert_arn": cert['CertificateArn'],
@@ -397,7 +416,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                 if 'Certificate' in cert_details:
                     certificate = cert_details['Certificate']
                     # Log the certificate structure
-                    logger.info(json.dumps({
+                    logger.info(json_dumps_with_datetime({
                         "action": "certificate_structure",
                         "domain": domain,
                         "cert_arn": cert['CertificateArn'],
@@ -405,9 +424,23 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                         "message": "Certificate structure keys"
                     }))
                     
-                    # Safely extract validation method
+                    # Safely extract validation method - log full certificate for debugging
+                    logger.info(json_dumps_with_datetime({
+                        "action": "certificate_debug",
+                        "domain": domain,
+                        "certificate_status": certificate.get('Status'),
+                        "domain_validation_options": certificate.get('DomainValidationOptions', []),
+                        "message": "Certificate validation details for debugging"
+                    }))
+                    
+                    # Try multiple ways to get validation method
                     if 'ValidationMethod' in certificate:
                         validation_method = certificate['ValidationMethod']
+                        logger.info(json_dumps_with_datetime({
+                            "action": "found_validation_method",
+                            "validation_method": validation_method,
+                            "message": "Found validation method in certificate"
+                        }))
                     
                     # Extract validation domain if it exists
                     if 'DomainValidationOptions' in certificate and certificate['DomainValidationOptions']:
@@ -415,10 +448,20 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                         for validation in domain_validations:
                             if validation.get('DomainName') == domain and 'ValidationDomain' in validation:
                                 validation_domain = validation['ValidationDomain']
+                                # For certificates created through our API, store the originally requested validation method
+                                # in a local database. For now, we'll only infer EMAIL if validation domain exists
+                                # and no ResourceRecord is present
+                                if validation_method == "UNKNOWN" and validation_domain:
+                                    # Check if this has DNS validation records
+                                    has_dns_records = 'ResourceRecord' in validation
+                                    if has_dns_records:
+                                        validation_method = "DNS"
+                                    else:
+                                        validation_method = "EMAIL"
                                 break
                 
                 # Log the full certificate details
-                logger.info(json.dumps({
+                logger.info(json_dumps_with_datetime({
                     "action": "certificate_details",
                     "domain": domain,
                     "cert_arn": cert['CertificateArn'],
@@ -444,7 +487,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                         break
                         
                 except Exception as tag_error:
-                    logger.error(json.dumps({
+                    logger.error(json_dumps_with_datetime({
                         "action": "tags_error",
                         "domain": domain,
                         "cert_arn": cert['CertificateArn'],
@@ -469,7 +512,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
             validation_records = []
             if 'Certificate' in cert_details and 'DomainValidationOptions' in cert_details['Certificate']:
                 # Log validation details for debugging
-                logger.info(json.dumps({
+                logger.info(json_dumps_with_datetime({
                     "action": "validation_details",
                     "domain": domain,
                     "cert_arn": certificate_arn,
@@ -507,44 +550,154 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
         
         # If certificate is issued, proceed with API Gateway and DynamoDB setup
         if certificate_status == 'ISSUED':
-            # 1. Create custom domain in API Gateway
-            api_domain = None
+            # 1. Check if domain already exists in API Gateway
             try:
-                domain_response = apigateway_client.create_domain_name(
-                    DomainName=domain,
-                    DomainNameConfigurations=[
-                        {
-                            'CertificateArn': certificate_arn,
-                            'EndpointType': 'REGIONAL',
-                            'SecurityPolicy': 'TLS_1_2'
+                # Try to get domain configuration first
+                existing_domain = None
+                try:
+                    existing_domain = apigateway_client.get_domain_name(
+                        DomainName=domain
+                    )
+                    # If we get here, domain already exists
+                    api_domain = existing_domain['DomainNameConfigurations'][0]['ApiGatewayDomainName']
+                    
+                    logger.info(json_dumps_with_datetime({
+                        "action": "domain_exists",
+                        "domain": domain,
+                        "api_gateway_domain": api_domain,
+                        "message": "Domain already exists in API Gateway"
+                    }))
+                    
+                    # Check if there's a mapping for this domain
+                    try:
+                        apigateway_client.get_api_mapping(
+                            DomainName=domain,
+                            ApiMappingId=""
+                        )
+                        logger.info(json_dumps_with_datetime({
+                            "action": "mapping_exists",
+                            "domain": domain,
+                            "message": "API mapping already exists"
+                        }))
+                    except Exception as mapping_error:
+                        # If mapping doesn't exist, create it
+                        if "NotFoundException" in str(mapping_error):
+                            # Create API mapping
+                            api_id = os.getenv("API_GATEWAY_ID", "6h8u9qeur2")
+                            apigateway_client.create_api_mapping(
+                                DomainName=domain,
+                                ApiId=api_id,
+                                Stage="$default"
+                            )
+                            logger.info(json_dumps_with_datetime({
+                                "action": "mapping_created",
+                                "domain": domain,
+                                "api_id": api_id,
+                                "message": "Created new API mapping"
+                            }))
+                    
+                    # Make sure the domain is in DynamoDB
+                    table_name = os.getenv("DYNAMODB_TABLE", "domain-workspace-mappings")
+                    table = dynamodb_client.Table(table_name)
+                    
+                    # Check if entry exists
+                    try:
+                        item_response = table.get_item(
+                            Key={
+                                'domain': domain
+                            }
+                        )
+                        if 'Item' not in item_response:
+                            # Add entry to DynamoDB
+                            table.put_item(
+                                Item={
+                                    'domain': domain,
+                                    'workspaceId': workspace_id,
+                                    'status': 'active',
+                                    'createdAt': datetime.now().isoformat()
+                                }
+                            )
+                            logger.info(json_dumps_with_datetime({
+                                "action": "dynamodb_item_created",
+                                "domain": domain,
+                                "workspace_id": workspace_id,
+                                "message": "Added domain mapping to DynamoDB"
+                            }))
+                    except Exception as dynamo_error:
+                        logger.error(json_dumps_with_datetime({
+                            "action": "dynamodb_error",
+                            "domain": domain,
+                            "error": str(dynamo_error),
+                            "message": "Error checking/creating DynamoDB entry"
+                        }))
+                    
+                    return DomainStatus(
+                        workspace_id=workspace_id,
+                        domain=domain,
+                        status="CONFIGURED",
+                        validation_method=validation_method,
+                        certificate_status=certificate_status,
+                        api_gateway_domain=api_domain,
+                        validation_domain=validation_domain,
+                        message="Custom domain is fully configured. Create a CNAME record from your domain to the API Gateway domain."
+                    )
+                    
+                except Exception as domain_check_error:
+                    # Domain doesn't exist yet, we'll create it
+                    if "NotFoundException" not in str(domain_check_error):
+                        # Log unexpected errors
+                        logger.error(json_dumps_with_datetime({
+                            "action": "domain_check_error",
+                            "domain": domain,
+                            "error": str(domain_check_error),
+                            "message": "Unexpected error checking domain existence"
+                        }))
+                
+                # If we get here, domain doesn't exist, so create it
+                if not existing_domain:
+                    logger.info(json_dumps_with_datetime({
+                        "action": "creating_domain",
+                        "domain": domain,
+                        "cert_arn": certificate_arn,
+                        "message": "Creating new domain in API Gateway"
+                    }))
+                    
+                    # Create the domain
+                    domain_response = apigateway_client.create_domain_name(
+                        DomainName=domain,
+                        DomainNameConfigurations=[
+                            {
+                                'CertificateArn': certificate_arn,
+                                'EndpointType': 'REGIONAL',
+                                'SecurityPolicy': 'TLS_1_2'
+                            }
+                        ]
+                    )
+                    api_domain = domain_response['DomainNameConfigurations'][0]['ApiGatewayDomainName']
+                    
+                    # 2. Map domain to the HTTP API
+                    # Get API ID from environment variables
+                    api_id = os.getenv("API_GATEWAY_ID", "6h8u9qeur2")
+                    
+                    apigateway_client.create_api_mapping(
+                        DomainName=domain,
+                        ApiId=api_id,
+                        Stage="$default"
+                    )
+                    
+                    # 3. Update DynamoDB with domain mapping
+                    table_name = os.getenv("DYNAMODB_TABLE", "domain-workspace-mappings")
+                    table = dynamodb_client.Table(table_name)
+                    
+                    # Add entry to DynamoDB
+                    table.put_item(
+                        Item={
+                            'domain': domain,
+                            'workspaceId': workspace_id,
+                            'status': 'active',
+                            'createdAt': datetime.now().isoformat()
                         }
-                    ]
-                )
-                api_domain = domain_response['DomainNameConfigurations'][0]['ApiGatewayDomainName']
-                
-                # 2. Map domain to the HTTP API
-                # Get API ID from environment variables
-                api_id = os.getenv("API_GATEWAY_ID", "6h8u9qeur2")
-                
-                apigateway_client.create_api_mapping(
-                    DomainName=domain,
-                    ApiId=api_id,
-                    Stage="$default"
-                )
-                
-                # 3. Update DynamoDB with domain mapping
-                table_name = os.getenv("DYNAMODB_TABLE", "domain-workspace-mappings")
-                table = dynamodb_client.Table(table_name)
-                
-                # Add entry to DynamoDB
-                table.put_item(
-                    Item={
-                        'domain': domain,
-                        'workspaceId': workspace_id,
-                        'status': 'active',
-                        'createdAt': datetime.now().isoformat()
-                    }
-                )
+                    )
                 
                 return DomainStatus(
                     workspace_id=workspace_id,
@@ -558,7 +711,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                 )
                 
             except Exception as e:
-                logger.error(json.dumps({
+                logger.error(json_dumps_with_datetime({
                     "action": "configure_domain_error",
                     "domain": domain,
                     "workspace_id": workspace_id,
@@ -587,7 +740,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
         )
             
     except Exception as e:
-        logger.error(json.dumps({
+        logger.error(json_dumps_with_datetime({
             "action": "check_domain_status_error",
             "domain": domain,
             "workspace_id": workspace_id,
