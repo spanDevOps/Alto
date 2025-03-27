@@ -583,7 +583,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                         # If mapping doesn't exist, create it
                         if "NotFoundException" in str(mapping_error):
                             # Create API mapping
-                            api_id = os.getenv("API_GATEWAY_ID", "6h8u9qeur2")
+                            api_id = os.getenv("API_GATEWAY_ID")
                             apigateway_client.create_api_mapping(
                                 DomainName=domain,
                                 ApiId=api_id,
@@ -597,7 +597,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                             }))
                     
                     # Make sure the domain is in DynamoDB
-                    table_name = os.getenv("DYNAMODB_TABLE", "domain-workspace-mappings")
+                    table_name = os.getenv("DYNAMODB_TABLE")
                     table = dynamodb_client.Table(table_name)
                     
                     # Check if entry exists
@@ -677,7 +677,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                     
                     # 2. Map domain to the HTTP API
                     # Get API ID from environment variables
-                    api_id = os.getenv("API_GATEWAY_ID", "6h8u9qeur2")
+                    api_id = os.getenv("API_GATEWAY_ID")
                     
                     apigateway_client.create_api_mapping(
                         DomainName=domain,
@@ -686,7 +686,7 @@ async def check_domain_status(domain: str, workspace_id: str, clients=Depends(ge
                     )
                     
                     # 3. Update DynamoDB with domain mapping
-                    table_name = os.getenv("DYNAMODB_TABLE", "domain-workspace-mappings")
+                    table_name = os.getenv("DYNAMODB_TABLE")
                     table = dynamodb_client.Table(table_name)
                     
                     # Add entry to DynamoDB

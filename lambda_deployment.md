@@ -1,162 +1,284 @@
 # Deploying the Custom Domain API as AWS Lambda
 
-This guide provides step-by-step instructions for deploying the FastAPI application as an AWS Lambda function with API Gateway using the AWS Console.
+This guide provides step-by-step instructions for deploying the FastAPI application as an AWS Lambda function with API Gateway.
 
-## Preparation
+## Prerequisites
 
-1. Run the packaging PowerShell script to create the Lambda deployment package:
-   ```
-   .\package-lambda.ps1
-   ```
-   This script will create a `deployment\function.zip` file with all the necessary code and dependencies.
+- AWS CLI installed and configured with appropriate permissions
+- Python 3.8 or later
+- Access to AWS services: Lambda, API Gateway, ACM, and DynamoDB
 
-## Lambda Deployment (AWS Console)
+## Packaging the Application
 
-### 1. Create IAM Role
+Create a deployment package for Lambda:
 
-1. Open the AWS Console and navigate to **IAM** service
-2. Click on **Roles** in the left sidebar
-3. Click **Create role**
-4. Select **AWS service** as the trusted entity type
-5. Select **Lambda** as the use case
-6. Click **Next**
-7. Search for and add the following policies:
-   - `AmazonDynamoDBReadWriteAccess`
-   - `AWSCertificateManagerFullAccess`
-   - `AmazonAPIGatewayAdministrator`
-   - `AWSLambdaBasicExecutionRole` (for CloudWatch Logs)
-8. Click **Next**
-9. Name the role `lambda-custom-domain-reg-role`
-10. Click **Create role**
-
-### 2. Create Lambda Function
-
-1. Navigate to the **Lambda** service in AWS Console
-2. Click **Create function**
-3. Select **Author from scratch**
-4. Enter the following details:
-   - **Function name**: `CustomDomainRegistrationAPI`
-   - **Runtime**: Python 3.13
-   - **Architecture**: x86_64
-   - **Permissions**: Use an existing role
-   - **Existing role**: `lambda-custom-domain-reg-role` (created in previous step)
-5. Click **Create function**
-
-### 3. Upload Code
-
-1. In the Lambda function page, scroll to the **Code source** section
-2. Click on the **Upload from** dropdown and select **.zip file**
-3. Click **Upload** and select the `deployment/function.zip` file
-4. Click **Save**
-
-### 4. Configure Function Settings
-
-1. Scroll to **Configuration** tab
-2. Click on **General configuration** and then **Edit**
-   - Set **Timeout** to `30` seconds
-   - Set **Memory** to `256` MB
-   - Click **Save**
-3. Click on **Environment variables** and then **Edit**
-   - Add the following key-value pairs:
-     - Key: `API_GATEWAY_ID` Value: `[Leave blank for now]` (Will add after creating API Gateway)
-     - Key: `DYNAMODB_TABLE` Value: `domain-workspace-mappings`
-   - Click **Save**
-   - Note: `AWS_REGION` is automatically set by AWS Lambda and should not be added as a custom environment variable
-
-### 5. Configure Handler and Test
-
-1. In the **Runtime settings** section, click **Edit**
-2. Change the **Handler** to `app.handler`
-3. Click **Save**
-4. At this point, your Lambda function is configured and ready to be invoked (no additional deployment steps needed)
-
-## API Gateway Setup (AWS Console)
-
-### 1. Create HTTP API
-
-1. Navigate to **API Gateway** service in AWS Console
-2. Click **Create API**
-3. Under HTTP API, click **Build**
-4. Enter the following details:
-   - **API name**: `CustomDomainProvisioningAPI`
-   - In **Integrations**, select **Add integration**
-   - Choose **Lambda**
-   - Select the `CustomDomainRegistrationAPI` Lambda function
-   - Keep **API key required** as `No`
-5. Click **Next**
-6. Configure routes:
-   - Click **Add route**
-   - Method: `POST`
-   - Resource path: `/domains/request`
-   - Integration target: `CustomDomainRegistrationAPI`
-   - Click **Add route** again
-   - Method: `GET`
-   - Resource path: `/domains/status`
-   - Integration target: `CustomDomainRegistrationAPI`
-7. Click **Next**
-8. Configure stages:
-   - Keep default stage name as `$default`
-   - Enable **Auto-deploy**
-9. Click **Next**
-10. Review and click **Create**
-
-### 2. Configure CORS
-
-1. In the API Gateway console, select your API
-2. Select the **CORS** tab
-3. Click **Configure**
-4. Add the following settings:
-   - **Access-Control-Allow-Origins**: `*` (or your specific domains)
-   - **Access-Control-Allow-Headers**: `content-type,x-api-key,authorization,x-workspace-id`
-   - **Access-Control-Allow-Methods**: `*`
-   - **Access-Control-Allow-Credentials**: `Yes`
-5. Click **Save**
-
-## API Usage
-
-### 1. Request Certificate
-
-To request a certificate for a custom domain, call the request endpoint with the domain and workspace_id:
+### PowerShell (Windows)
 
 ```powershell
-$response = Invoke-RestMethod -Uri "https://abc123def.execute-api.us-east-1.amazonaws.com/domains/request" -Method Post -Body '{"domain": "test.devopsify.shop", "workspace_id": "workspace-test"}' -ContentType "application/json"
+# Create a directory for the deployment package
+New-Item -ItemType Directory -Force -Path "package"
 
-# Display the response including validation records
-$response | ConvertTo-Json -Depth 5
+# Copy the application code
+Copy-Item app.py package/
+
+# Install dependencies in the package directory
+pip install -r requirements.txt -t package
+
+# Create the zip file
+cd package
+Compress-Archive -Path * -DestinationPath ../function.zip -Force
+cd ..
 ```
 
-The response will include validation records that need to be added to DNS.
+### Bash (Linux/macOS)
 
-### 2. Check Certificate Status
+```bash
+# Create a directory for the deployment package
+mkdir -p package
 
-After adding the CNAME records to DNS, check the status using the domain and workspace_id:
+# Copy the application code
+cp app.py package/
+
+# Install dependencies in the package directory
+pip install -r requirements.txt -t package
+
+# Create the zip file
+cd package
+zip -r ../function.zip .
+cd ..
+```
+
+## IAM Role Setup
+
+Create an IAM role with necessary permissions:
+
+### PowerShell (Windows)
 
 ```powershell
-Invoke-RestMethod -Uri "https://abc123def.execute-api.us-east-1.amazonaws.com/domains/status?domain=test.devopsify.shop&workspace_id=workspace-test" -Method Get
+# Create IAM role for Lambda function
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe iam create-role --role-name lambda-custom-domain-reg-role --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}' | Out-String
+
+# Attach required policies
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess | Out-String
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess | Out-String
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator | Out-String
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole | Out-String
+
+# Wait for the role to propagate
+Start-Sleep -Seconds 10
 ```
 
-## Lambda CloudWatch Logs
+### Bash (Linux/macOS)
 
-To view logs for debugging:
+```bash
+# Create IAM role for Lambda function
+aws iam create-role --role-name lambda-custom-domain-reg-role --assume-role-policy-document '{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}'
 
-1. Navigate to **CloudWatch** service in AWS Console
-2. Click on **Log groups** in the left sidebar
-3. Find and click on the log group named `/aws/lambda/CustomDomainRegistrationAPI`
-4. View the latest log stream to see execution details
+# Attach required policies
+aws iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+aws iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess
+aws iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator
+aws iam attach-role-policy --role-name lambda-custom-domain-reg-role --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+# Wait for the role to propagate
+sleep 10
+```
+
+## Lambda Function Deployment
+
+Create the Lambda function:
+
+### PowerShell (Windows)
+
+```powershell
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe lambda create-function --function-name CustomDomainRegistrationAPI --zip-file fileb://function.zip --handler app.handler --runtime python3.9 --role arn:aws:iam::<ACCOUNT_ID>:role/lambda-custom-domain-reg-role --timeout 30 --memory-size 256 --environment "Variables={DYNAMODB_TABLE=domain-workspace-mappings,API_GATEWAY_ID=<YOUR_API_GATEWAY_ID>}" | Out-String
+```
+
+### Bash (Linux/macOS)
+
+```bash
+aws lambda create-function --function-name CustomDomainRegistrationAPI --zip-file fileb://function.zip --handler app.handler --runtime python3.9 --role arn:aws:iam::<ACCOUNT_ID>:role/lambda-custom-domain-reg-role --timeout 30 --memory-size 256 --environment "Variables={DYNAMODB_TABLE=domain-workspace-mappings,API_GATEWAY_ID=<YOUR_API_GATEWAY_ID>}"
+```
+
+Replace `<ACCOUNT_ID>` with your AWS account ID and `<YOUR_API_GATEWAY_ID>` with your API Gateway ID.
+
+## API Gateway HTTP API Setup
+
+Create an HTTP API:
+
+### PowerShell (Windows)
+
+```powershell
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe apigatewayv2 create-api --name CustomDomainAPI --protocol-type HTTP --target arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:CustomDomainRegistrationAPI | Out-String
+```
+
+### Bash (Linux/macOS)
+
+```bash
+aws apigatewayv2 create-api --name CustomDomainAPI --protocol-type HTTP --target arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:CustomDomainRegistrationAPI
+```
+
+Note the API ID from the response (you'll need it for the Lambda environment variables).
+
+Grant API Gateway permission to invoke your Lambda function:
+
+### PowerShell (Windows)
+
+```powershell
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe lambda add-permission --function-name CustomDomainRegistrationAPI --statement-id apigateway --action lambda:InvokeFunction --principal apigateway.amazonaws.com --source-arn "arn:aws:execute-api:<REGION>:<ACCOUNT_ID>:<API_ID>/*/*/*" | Out-String
+```
+
+### Bash (Linux/macOS)
+
+```bash
+aws lambda add-permission --function-name CustomDomainRegistrationAPI --statement-id apigateway --action lambda:InvokeFunction --principal apigateway.amazonaws.com --source-arn "arn:aws:execute-api:<REGION>:<ACCOUNT_ID>:<API_ID>/*/*/*"
+```
+
+Replace `<REGION>`, `<ACCOUNT_ID>`, and `<API_ID>` with your values.
+
+## DynamoDB Table Setup
+
+Create the DynamoDB table for domain mappings:
+
+### PowerShell (Windows)
+
+```powershell
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe dynamodb create-table --table-name domain-workspace-mappings --attribute-definitions AttributeName=domain,AttributeType=S --key-schema AttributeName=domain,KeyType=HASH --billing-mode PAY_PER_REQUEST | Out-String
+```
+
+### Bash (Linux/macOS)
+
+```bash
+aws dynamodb create-table --table-name domain-workspace-mappings --attribute-definitions AttributeName=domain,AttributeType=S --key-schema AttributeName=domain,KeyType=HASH --billing-mode PAY_PER_REQUEST
+```
+
+## Testing the Deployment
+
+Test the API endpoints using curl or other HTTP client tools:
+
+### PowerShell (Windows)
+
+```powershell
+# Request a new domain with DNS validation
+$headers = @{
+    "Content-Type" = "application/json"
+}
+
+$body = @{
+    domain = "test.example.com"
+    workspace_id = "workspace-test"
+    validation_method = "DNS"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "https://<API_ID>.execute-api.<REGION>.amazonaws.com/domains/request" -Method POST -Headers $headers -Body $body
+```
+
+### Bash (Linux/macOS)
+
+```bash
+# Request a new domain with DNS validation
+curl -X POST "https://<API_ID>.execute-api.<REGION>.amazonaws.com/domains/request" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "test.example.com",
+    "workspace_id": "workspace-test",
+    "validation_method": "DNS"
+  }'
+```
+
+Check the status:
+
+### PowerShell (Windows)
+
+```powershell
+Invoke-RestMethod -Uri "https://<API_ID>.execute-api.<REGION>.amazonaws.com/domains/status?domain=test.example.com&workspace_id=workspace-test" -Method GET
+```
+
+### Bash (Linux/macOS)
+
+```bash
+curl -X GET "https://<API_ID>.execute-api.<REGION>.amazonaws.com/domains/status?domain=test.example.com&workspace_id=workspace-test"
+```
 
 ## Updating the Lambda Function
 
-When you make changes to your code:
+When you need to update the function code:
 
-1. Update your local code files
-2. Recreate the deployment package following the preparation steps
-3. In the Lambda console:
-   - Select your Lambda function
-   - Go to the **Code** tab
-   - Click **Upload from** and choose **.zip file**
-   - Select your updated zip file
-   - Click **Save**
+### PowerShell (Windows)
 
-## Conclusion
+```powershell
+# Repackage the application
+# [follow packaging steps again]
 
-Your FastAPI application is now deployed as a Lambda function with API Gateway integration. This serverless architecture provides a cost-effective solution for your custom domain provisioning API, perfectly suited for the limited usage by premium customers.
+# Update the Lambda function
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe lambda update-function-code --function-name CustomDomainRegistrationAPI --zip-file fileb://function.zip | Out-String
+```
+
+### Bash (Linux/macOS)
+
+```bash
+# Repackage the application
+# [follow packaging steps again]
+
+# Update the Lambda function
+aws lambda update-function-code --function-name CustomDomainRegistrationAPI --zip-file fileb://function.zip
+```
+
+## Monitoring and Logs
+
+View CloudWatch logs:
+
+### PowerShell (Windows)
+
+```powershell
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe logs describe-log-groups --log-group-name-prefix /aws/lambda/CustomDomainRegistrationAPI | Out-String
+
+# Get the most recent log stream
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="json";
+$logStreams = aws.exe logs describe-log-streams --log-group-name /aws/lambda/CustomDomainRegistrationAPI --order-by LastEventTime --descending --limit 1 | ConvertFrom-Json
+$latestStream = $logStreams.logStreams[0].logStreamName
+
+# View log events
+$env:AWS_PAGER=""; $env:AWS_DEFAULT_OUTPUT="text"; aws.exe logs get-log-events --log-group-name /aws/lambda/CustomDomainRegistrationAPI --log-stream-name $latestStream | Out-String
+```
+
+### Bash (Linux/macOS)
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix /aws/lambda/CustomDomainRegistrationAPI
+
+# Get the most recent log stream
+logStream=$(aws logs describe-log-streams --log-group-name /aws/lambda/CustomDomainRegistrationAPI --order-by LastEventTime --descending --limit 1 --query 'logStreams[0].logStreamName' --output text)
+
+# View log events
+aws logs get-log-events --log-group-name /aws/lambda/CustomDomainRegistrationAPI --log-stream-name $logStream
+```
+
+## Security Considerations
+
+- Restrict IAM permissions to the minimum required
+- Consider adding authentication to your API Gateway endpoints
+- Review ACM certificate validation methods for security implications
+- Implement API key requirements or other authorization mechanisms
